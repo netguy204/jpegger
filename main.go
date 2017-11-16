@@ -37,6 +37,7 @@ const (
 	DateKey     = "Date and Time"
 	DateFormat  = "2006:01:02 15:04:05"
 	ContentHash = "ContentHash"
+	SourcePath  = "SourcePath"
 	HashWorkers = 3
 )
 
@@ -91,7 +92,24 @@ type FileStamp struct {
 }
 
 // Compute a unique key based on the contents of the file
-func FileKey(path string) ([]byte, error) {
+func FileKey(db *bolt.DB, path string) ([]byte, error) {
+	var cachedKey []byte
+
+	err := db.View(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(SourcePath))
+		cachedKey = b.Get([]byte(path))
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if cachedKey != nil {
+		log.Printf("cache hit for %s", path)
+		return cachedKey, nil
+	}
+
+	// otherwise, compute the hash
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -108,20 +126,33 @@ func FileKey(path string) ([]byte, error) {
 
 // Transition the state machine for this file from one state to the next.
 // Error if the file was not in the anticipated state.
-func CommitState(db *bolt.DB, key []byte, reqPrevState, reqNextState []byte) error {
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket([]byte(ContentHash))
+func CommitState(db *bolt.DB, path string, key, reqPrevState, reqNextState []byte) (bool, error) {
+	transitioned := false
 
-		prevState := b.Get(key)
-		if bytes.Compare(prevState, reqPrevState) != 0 {
-			return PreconditionFailed
-		}
-		err := b.Put(key, reqNextState)
+	rErr := db.Update(func(tx *bolt.Tx) error {
+		// associate the key with the path
+		b2 := tx.Bucket([]byte(SourcePath))
+		err := b2.Put([]byte(path), key)
 		if err != nil {
 			return err
 		}
+
+		// record the state transition
+		b := tx.Bucket([]byte(ContentHash))
+		prevState := b.Get(key)
+		if bytes.Compare(prevState, reqPrevState) != 0 {
+			return nil
+		}
+		err = b.Put(key, reqNextState)
+		if err != nil {
+			return err
+		}
+		transitioned = true
+
 		return nil
 	})
+
+	return transitioned, rErr
 }
 
 // Recursively create a directory if it doesn't exist
@@ -174,6 +205,10 @@ func main() {
 		_, err := tx.CreateBucketIfNotExists([]byte(ContentHash))
 		if err != nil {
 			return fmt.Errorf("while creating bucket %s: %v", ContentHash, err)
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte(SourcePath))
+		if err != nil {
+			return fmt.Errorf("while creating bucket %s: %v", SourcePath, err)
 		}
 		return nil
 	})
@@ -241,7 +276,7 @@ func main() {
 		go func() {
 			defer wg.Done()
 			for stamp := range stamps {
-				stamp.Key, err = FileKey(stamp.Path)
+				stamp.Key, err = FileKey(db, stamp.Path)
 				if err != nil {
 					log.Fatalf("while hashing files: %v", err)
 				}
@@ -257,46 +292,45 @@ func main() {
 
 	// actually copy the file
 	for result := range hashedStamps {
-		err = CommitState(db, result.Key, NoFile, DiscoveredFile)
+		transitioned, err := CommitState(db, result.Path, result.Key, NoFile, DiscoveredFile)
 		if err != nil {
-			if err == PreconditionFailed {
-				log.Printf("skipping handled file: %s", result.Path)
-			} else {
-				log.Fatalf("while recording file %s: %v", result.Path, err)
-			}
-		} else {
-			// form the path
-			baseName := path.Base(result.Path)
-			directory := fmt.Sprintf("%s/%s", output, TimePath(result.Time))
-			destPath := fmt.Sprintf("%s/%s", directory, baseName)
-
-			err = EnsureDir(directory)
-			if err != nil {
-				log.Fatalf("while creating directory %s: %v", directory, err)
-			}
-
-			err = os.Link(result.Path, destPath)
-			if err != nil {
-				if os.IsExist(err) {
-					// try an alternative path
-					keyFragment := fmt.Sprintf("%x", result.Key)[:8]
-					destPath = fmt.Sprintf("%s/%s_%s", directory, keyFragment, baseName)
-					err = os.Link(result.Path, destPath)
-				}
-
-				// check again because it may have changed as a result of IsExist
-				if err != nil {
-					log.Fatalf("while linking: %v", err)
-				}
-			}
-
-			err = CommitState(db, result.Key, DiscoveredFile, CopiedFile)
-			if err != nil {
-				log.Fatalf("while commiting file %s: %v", result.Path, err)
-			}
-
-			log.Printf("finished: %s\n", result.Path)
+			log.Fatalf("while recording file %s: %v", result.Path, err)
 		}
 
+		if !transitioned {
+			continue // file wasn't in the expected state
+		}
+
+		// form the path
+		baseName := path.Base(result.Path)
+		directory := fmt.Sprintf("%s/%s", output, TimePath(result.Time))
+		destPath := fmt.Sprintf("%s/%s", directory, baseName)
+
+		err = EnsureDir(directory)
+		if err != nil {
+			log.Fatalf("while creating directory %s: %v", directory, err)
+		}
+
+		err = os.Link(result.Path, destPath)
+		if err != nil {
+			if os.IsExist(err) {
+				// try an alternative path
+				keyFragment := fmt.Sprintf("%x", result.Key)[:8]
+				destPath = fmt.Sprintf("%s/%s_%s", directory, keyFragment, baseName)
+				err = os.Link(result.Path, destPath)
+			}
+
+			// check again because it may have changed as a result of IsExist
+			if err != nil {
+				log.Fatalf("while linking: %v", err)
+			}
+		}
+
+		_, err = CommitState(db, result.Path, result.Key, DiscoveredFile, CopiedFile)
+		if err != nil {
+			log.Fatalf("while commiting file %s: %v", result.Path, err)
+		}
+
+		log.Printf("finished: %s\n", result.Path)
 	}
 }
