@@ -298,6 +298,7 @@ func main() {
 		}
 
 		if !transitioned {
+			log.Printf("skipping handled file %s", result.Path)
 			continue // file wasn't in the expected state
 		}
 
