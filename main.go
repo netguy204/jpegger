@@ -27,7 +27,12 @@ var (
 	DeleteCopyState = flag.Bool("delete-copy-state", false, "delete the memory of what we've copied. does not forget hashes")
 
 	Extensions   = []string{".mov", ".jpg", ".jpeg", ".avi", ".mp4"}
-	SkipPatterns = []string{".appledouble"}
+	SkipPatterns = []string{".AppleDouble"}
+	ExifKeys     = []string{
+		"Date and Time (Original)",
+		"Date and Time (Digitized)",
+		"Create Date",
+	}
 
 	PreconditionFailed = fmt.Errorf("precondition not met")
 
@@ -257,15 +262,19 @@ func main() {
 				return err
 			}
 		} else {
-			dateStr, ok := data.Tags[DateKey]
-			if ok {
-				maybeDate, err := time.Parse(DateFormat, dateStr)
-				if err != nil {
-					return err
+			for _, key := range ExifKeys {
+				dateStr, ok := data.Tags[key]
+				if ok {
+					maybeDate, err := time.Parse(DateFormat, dateStr)
+					if err != nil {
+						return err
+					}
+					date = maybeDate
+					source = DateSourceExif
+					break
 				}
-				date = maybeDate
-				source = DateSourceExif
 			}
+
 		}
 
 		stamps <- FileStamp{name, date, source, nil}
