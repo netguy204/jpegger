@@ -266,17 +266,28 @@ func main() {
 			}
 		} else {
 			// form the path
+			baseName := path.Base(result.Path)
 			directory := fmt.Sprintf("%s/%s", output, TimePath(result.Time))
-			path := fmt.Sprintf("%s/%s", directory, path.Base(result.Path))
+			destPath := fmt.Sprintf("%s/%s", directory, baseName)
 
 			err = EnsureDir(directory)
 			if err != nil {
 				log.Fatalf("while creating directory %s: %v", directory, err)
 			}
 
-			err = os.Link(result.Path, path)
+			err = os.Link(result.Path, destPath)
 			if err != nil {
-				log.Fatalf("while linking %s to %s: %v", result.Path, path, err)
+				if os.IsExist(err) {
+					// try an alternative path
+					keyFragment := fmt.Sprintf("%x", result.Key)[:8]
+					destPath = fmt.Sprintf("%s/%s_%s", directory, keyFragment, baseName)
+					err = os.Link(result.Path, destPath)
+				}
+
+				// check again because it may have changed as a result of IsExist
+				if err != nil {
+					log.Fatalf("while linking: %v", err)
+				}
 			}
 
 			err = CommitState(db, result.Key, DiscoveredFile, CopiedFile)
