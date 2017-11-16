@@ -112,7 +112,6 @@ func FileKey(db *bolt.DB, path string) ([]byte, error) {
 	}
 
 	if cachedKey != nil {
-		log.Printf("cache hit for %s", path)
 		return cachedKey, nil
 	}
 
