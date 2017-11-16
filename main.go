@@ -22,9 +22,10 @@ import (
 )
 
 var (
-	Database   = flag.String("database", "state.db", "path to persisted state")
-	Log        = flag.String("log", "actions.log", "path to result log")
-	Extensions = []string{".mov", ".jpg", ".jpeg", ".avi", ".mp4"}
+	Database     = flag.String("database", "state.db", "path to persisted state")
+	Log          = flag.String("log", "actions.log", "path to result log")
+	Extensions   = []string{".mov", ".jpg", ".jpeg", ".avi", ".mp4"}
+	SkipPatterns = []string{".appledouble"}
 
 	PreconditionFailed = fmt.Errorf("precondition not met")
 
@@ -51,6 +52,12 @@ const (
 
 // Is the path an example of the extensions that we care about?
 func ValidName(path string) bool {
+	for _, pat := range SkipPatterns {
+		if strings.Contains(path, pat) {
+			return false
+		}
+	}
+
 	path = strings.ToLower(path)
 	for _, ext := range Extensions {
 		if strings.HasSuffix(path, ext) {
