@@ -22,8 +22,10 @@ import (
 )
 
 var (
-	Database     = flag.String("database", "state.db", "path to persisted state")
-	Log          = flag.String("log", "actions.log", "path to result log")
+	Database        = flag.String("database", "state.db", "path to persisted state")
+	Log             = flag.String("log", "actions.log", "path to result log")
+	DeleteCopyState = flag.Bool("delete-copy-state", false, "delete the memory of what we've copied. does not forget hashes")
+
 	Extensions   = []string{".mov", ".jpg", ".jpeg", ".avi", ".mp4"}
 	SkipPatterns = []string{".appledouble"}
 
@@ -208,6 +210,13 @@ func main() {
 
 	// create our buckets
 	err = db.Update(func(tx *bolt.Tx) error {
+		if *DeleteCopyState {
+			err := tx.DeleteBucket([]byte(ContentHash))
+			if err != nil {
+				panic(err)
+			}
+		}
+
 		_, err := tx.CreateBucketIfNotExists([]byte(ContentHash))
 		if err != nil {
 			return fmt.Errorf("while creating bucket %s: %v", ContentHash, err)
