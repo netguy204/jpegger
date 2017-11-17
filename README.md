@@ -9,7 +9,21 @@ Files are placed in a directory according to the the date they were taken. Files
 
 Files that have already been copied (as determined by the SHA256 hash of their contents) are not copied again.
 
-Usage:
+### Building
+
+You must already have a working Go environment. Install libexif using your package manager and then run
+
+```
+sh ensure_dep.sh
+```
+
+to make sure all of the dependencies are installed. Then run
+
+```
+go build
+```
+
+### Usage
 
 ```
 ./jpegger input_dir output_dir
