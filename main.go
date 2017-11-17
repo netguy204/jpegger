@@ -134,7 +134,22 @@ func FileKey(db *bolt.DB, path string) ([]byte, error) {
 		return nil, err
 	}
 
-	return h.Sum(nil), nil
+	key := h.Sum(nil)
+
+	err = db.Update(func(tx *bolt.Tx) error {
+		// associate the key with the path
+		b2 := tx.Bucket([]byte(SourcePath))
+		err := b2.Put([]byte(path), key)
+		if err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return key, nil
 }
 
 // Transition the state machine for this file from one state to the next.
@@ -143,20 +158,13 @@ func CommitState(db *bolt.DB, path string, key, reqPrevState, reqNextState []byt
 	transitioned := false
 
 	rErr := db.Update(func(tx *bolt.Tx) error {
-		// associate the key with the path
-		b2 := tx.Bucket([]byte(SourcePath))
-		err := b2.Put([]byte(path), key)
-		if err != nil {
-			return err
-		}
-
 		// record the state transition
 		b := tx.Bucket([]byte(ContentHash))
 		prevState := b.Get(key)
 		if bytes.Compare(prevState, reqPrevState) != 0 {
 			return nil
 		}
-		err = b.Put(key, reqNextState)
+		err := b.Put(key, reqNextState)
 		if err != nil {
 			return err
 		}
